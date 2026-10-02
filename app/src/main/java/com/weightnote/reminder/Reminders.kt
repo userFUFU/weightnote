@@ -20,7 +20,6 @@ import com.weightnote.data.db.AppDatabase
 import com.weightnote.data.db.MetricKeys
 import com.weightnote.data.db.ReminderEntity
 import com.weightnote.data.epochMillisOf
-import com.weightnote.data.todayDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -121,7 +120,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 val group = db.groupDao().get(reminder.groupId) ?: return@launch
                 val profile = db.profileDao().get(group.profileId) ?: return@launch
                 val weight = db.metricDao().getByKey(profile.id, MetricKeys.WEIGHT) ?: return@launch
-                val recorded = db.recordDao().countOnDay(group.id, weight.id, todayDay()) > 0
+                val recorded = container.repository.hasRecordToday(group.id, weight.id)
                 if (!recorded) {
                     val multiProfile = db.profileDao().getAll().size > 1
                     val who = if (multiProfile) "${profile.name} · " else ""

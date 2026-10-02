@@ -23,11 +23,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.weightnote.data.MeasureUnit
 import com.weightnote.data.UnitType
+import com.weightnote.data.db.GroupEntity
 import com.weightnote.data.db.RecordEntity
 import com.weightnote.data.formatNumber
 import com.weightnote.ui.Session
 import com.weightnote.ui.components.ColorDot
 import com.weightnote.ui.components.formatDateTime
+import com.weightnote.ui.components.formatTime
 import com.weightnote.ui.components.groupColor
 
 /** 自定义数字键盘的按键 */
@@ -149,6 +151,46 @@ fun ConflictDialog(
             }
         },
     )
+}
+
+/**
+ * 分组下方的提示：
+ * - 已开启自动归组：说明按哪个时间选中了哪个分组
+ * - 未开启但配置了时间段：提供一键开启
+ */
+@Composable
+fun AutoGroupHint(
+    session: Session,
+    recordedAt: Long,
+    suggested: GroupEntity?,
+    selectedGroupId: Long,
+    onEnable: () -> Unit,
+) {
+    val style = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val time = formatTime(recordedAt)
+    when {
+        session.profile.autoGroupByTime && suggested != null -> Text(
+            if (suggested.id == selectedGroupId) {
+                "已按时间 $time 自动选择「${suggested.name}」"
+            } else {
+                "按时间 $time 应为「${suggested.name}」，当前为手动选择"
+            },
+            style = style,
+            color = muted,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        session.profile.autoGroupByTime && session.rules.isNotEmpty() -> Text(
+            "$time 不在任何分组的时间段内，请手动选择分组",
+            style = style,
+            color = muted,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        !session.profile.autoGroupByTime && session.rules.isNotEmpty() -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("按时间自动选择分组未开启", style = style, color = muted, modifier = Modifier.weight(1f))
+            TextButton(onClick = onEnable) { Text("开启") }
+        }
+    }
 }
 
 @Composable

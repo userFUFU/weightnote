@@ -1,6 +1,7 @@
 package com.weightnote.domain
 
 import com.weightnote.data.TimeRange
+import com.weightnote.data.dayOf
 import com.weightnote.data.db.GroupEntity
 import com.weightnote.data.db.GroupTimeRuleEntity
 import com.weightnote.data.db.RecordEntity
@@ -104,6 +105,18 @@ fun suggestGroup(
     return groups.firstOrNull { g ->
         rules.any { it.groupId == g.id && minuteInRange(minute, it.startMinute, it.endMinute) }
     }
+}
+
+/**
+ * 记录归属的“逻辑日期”。
+ * 分组有跨午夜的时间段（如 晚上 18:00–02:00）时，落在午夜之后那一段（00:00–02:00）的记录
+ * 归属前一天，这样 10/2 晚上 00:12 称的体重仍算 10/2 的「晚上」，不会和 10/3 晚上的记录冲突。
+ */
+fun logicalDay(epochMillis: Long, groupRules: List<GroupTimeRuleEntity>): Long {
+    val day = dayOf(epochMillis)
+    val minute = minuteOfDay(epochMillis)
+    val afterMidnight = groupRules.any { it.startMinute > it.endMinute && minute < it.endMinute }
+    return if (afterMidnight) day - 1 else day
 }
 
 fun rangesOverlap(a: TimeRange, b: TimeRange): Boolean =

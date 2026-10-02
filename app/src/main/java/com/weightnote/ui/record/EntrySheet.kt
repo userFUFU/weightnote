@@ -80,12 +80,26 @@ fun EntrySheet(
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
 
-    var groupId by remember { mutableLongStateOf(initialGroupId(session, mode)) }
+    var recordedAt by remember { mutableLongStateOf(editRecord?.recordedAt ?: System.currentTimeMillis()) }
+    var groupId by remember { mutableLongStateOf(initialGroupId(session, mode, recordedAt)) }
+    // 用户手动选过分组（或从“今日”卡片/通知指定了分组）后，不再按时间自动切换
+    var groupManual by remember {
+        mutableStateOf(editRecord != null || (mode as? EntryMode.NewWeight)?.presetGroupId != null)
+    }
     val group = session.groupById[groupId]
     val unit: MeasureUnit = editRecord?.let { MeasureUnit.of(it.inputUnit, session.displayUnit(metric)) }
         ?: session.inputUnit(metric, group)
 
-    var recordedAt by remember { mutableLongStateOf(editRecord?.recordedAt ?: System.currentTimeMillis()) }
+    // 按记录时间匹配分组：打开面板、修改时间、开启自动归组时都会重新匹配
+    val suggested = if (editRecord == null && session.profile.autoGroupByTime) {
+        suggestGroup(session.groups, session.rules, recordedAt)
+    } else {
+        null
+    }
+    LaunchedEffect(suggested?.id) {
+        if (!groupManual && suggested != null) groupId = suggested.id
+    }
+
     var valueText by remember { mutableStateOf(editRecord?.let { formatNumber(it.inputValue) } ?: "") }
     var valueFresh by remember { mutableStateOf(true) }
     var fatText by remember { mutableStateOf("") }
@@ -198,7 +212,22 @@ fun EntrySheet(
                 }
             }
             Spacer(Modifier.height(8.dp))
-            GroupSingleChips(session.groups, groupId, onSelect = { groupId = it.id })
+            GroupSingleChips(session.groups, groupId, onSelect = {
+                groupId = it.id
+                groupManual = true
+            })
+            if (editRecord == null) {
+                AutoGroupHint(
+                    session = session,
+                    recordedAt = recordedAt,
+                    suggested = suggested,
+                    selectedGroupId = groupId,
+                    onEnable = {
+                        groupManual = false
+                        vm.setAutoGroup(true)
+                    },
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             Surface(
@@ -327,13 +356,13 @@ fun EntrySheet(
     }
 }
 
-/** 初始分组：编辑时用原分组；新建时依次取指定分组、时间规则推荐的分组、第一个分组 */
-private fun initialGroupId(session: Session, mode: EntryMode): Long {
+/** 初始分组：编辑时用原分组；新建时依次取指定分组、按记录时间匹配的分组、第一个分组 */
+private fun initialGroupId(session: Session, mode: EntryMode, recordedAt: Long): Long {
     if (mode is EntryMode.Edit) return mode.record.groupId
     val preset = (mode as EntryMode.NewWeight).presetGroupId?.takeIf { session.groupById.containsKey(it) }
     if (preset != null) return preset
     if (session.profile.autoGroupByTime) {
-        suggestGroup(session.groups, session.rules, System.currentTimeMillis())?.let { return it.id }
+        suggestGroup(session.groups, session.rules, recordedAt)?.let { return it.id }
     }
     return session.groups.firstOrNull()?.id ?: 0L
 }

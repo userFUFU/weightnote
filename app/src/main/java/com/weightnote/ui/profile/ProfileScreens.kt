@@ -61,7 +61,7 @@ fun OnboardingScreen(onCreate: (ProfileEntity) -> Unit) {
             Text("欢迎使用体重记", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "先创建一个身份，选好常用单位。我们会预设「早晨」「晚上」两个分组，之后可以在设置里修改。所有数据只保存在本机。",
+                "先创建一个身份，选好常用单位。我们会预设「早晨」（04:00–11:00）和「晚上」（18:00–次日 02:00）两个分组，记录时按当前时间自动选择分组，之后可以在 设置 → 分组管理 中修改或关闭。所有数据只保存在本机。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

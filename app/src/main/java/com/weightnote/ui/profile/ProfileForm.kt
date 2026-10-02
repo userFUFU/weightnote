@@ -60,7 +60,8 @@ class ProfileFormState(private val initial: ProfileEntity?) {
             it.toDoubleOrNull()?.takeIf { v -> v > 0 }?.let { v -> weightUnit.toBase(v) }
                 ?: return fail("目标体重不正确")
         }
-        val base = initial ?: ProfileEntity(name = n)
+        // 新身份默认开启“按时间自动归组”（预设了早晨/晚上的时间段）
+        val base = initial ?: ProfileEntity(name = n, autoGroupByTime = true)
         return base.copy(
             name = n,
             heightCm = h,

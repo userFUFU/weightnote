@@ -60,13 +60,18 @@ fun MeasureEntryScreen(session: Session, vm: MainViewModel, onBack: () -> Unit) 
     val metrics = session.lengthMetrics
     val unit = session.profile.lengthUnitEnum
 
+    var recordedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var groupId by remember {
         mutableLongStateOf(
-            (if (session.profile.autoGroupByTime) suggestGroup(session.groups, session.rules, System.currentTimeMillis())?.id else null)
+            (if (session.profile.autoGroupByTime) suggestGroup(session.groups, session.rules, recordedAt)?.id else null)
                 ?: session.groups.firstOrNull()?.id ?: 0L,
         )
     }
-    var recordedAt by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var groupManual by remember { mutableStateOf(false) }
+    val suggested = if (session.profile.autoGroupByTime) suggestGroup(session.groups, session.rules, recordedAt) else null
+    LaunchedEffect(suggested?.id) {
+        if (!groupManual && suggested != null) groupId = suggested.id
+    }
     val values = remember { mutableStateMapOf<Long, String>() }
     val hints = remember { mutableStateMapOf<Long, String>() }
     var note by remember { mutableStateOf("") }
@@ -142,7 +147,22 @@ fun MeasureEntryScreen(session: Session, vm: MainViewModel, onBack: () -> Unit) 
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            GroupSingleChips(session.groups, groupId, onSelect = { groupId = it.id })
+            Column {
+                GroupSingleChips(session.groups, groupId, onSelect = {
+                    groupId = it.id
+                    groupManual = true
+                })
+                AutoGroupHint(
+                    session = session,
+                    recordedAt = recordedAt,
+                    suggested = suggested,
+                    selectedGroupId = groupId,
+                    onEnable = {
+                        groupManual = false
+                        vm.setAutoGroup(true)
+                    },
+                )
+            }
             ListItem(
                 modifier = Modifier.clickable { pickTime = true },
                 headlineContent = { Text(formatDateTime(recordedAt)) },

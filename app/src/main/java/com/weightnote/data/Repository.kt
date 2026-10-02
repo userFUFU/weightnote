@@ -9,6 +9,7 @@ import com.weightnote.data.db.MetricKeys
 import com.weightnote.data.db.ProfileEntity
 import com.weightnote.data.db.RecordEntity
 import com.weightnote.data.db.ReminderEntity
+import com.weightnote.domain.logicalDay
 import kotlinx.coroutines.flow.Flow
 
 /** 一条待保存的记录（新建或编辑） */
@@ -124,6 +125,13 @@ class Repository(
             )
             groupDao.deleteReminders(groupId)
             groupDao.insertReminders(reminders.map { it.copy(id = 0, groupId = groupId) })
+            // 时间段变化可能影响跨午夜记录的归属日期，重新计算
+            val newRules = groupDao.getRules(groupId)
+            val changed = recordDao.getByGroup(groupId).mapNotNull { r ->
+                val day = logicalDay(r.recordedAt, newRules)
+                if (day != r.day) r.copy(day = day) else null
+            }
+            if (changed.isNotEmpty()) recordDao.updateAll(changed)
             groupId
         }
         onRemindersChanged()
@@ -181,10 +189,14 @@ class Repository(
 
     suspend fun lastRecordOfMetric(metricId: Long): RecordEntity? = recordDao.lastOfMetric(metricId)
 
+    /** 记录归属的逻辑日期（考虑分组的跨午夜时间段） */
+    private suspend fun dayFor(groupId: Long, epochMillis: Long): Long =
+        logicalDay(epochMillis, groupDao.getRules(groupId))
+
     /** 查找与草稿“同一天、同分组、同指标”的已有记录 */
     suspend fun findConflicts(profileId: Long, drafts: List<RecordDraft>): List<RecordEntity> =
         drafts.flatMap {
-            recordDao.findSameDay(profileId, it.groupId, it.metricId, dayOf(it.recordedAt), it.editingId)
+            recordDao.findSameDay(profileId, it.groupId, it.metricId, dayFor(it.groupId, it.recordedAt), it.editingId)
         }.distinctBy { it.id }
 
     /**
@@ -207,7 +219,7 @@ class Repository(
                     inputValue = d.inputValue,
                     inputUnit = d.inputUnit.name,
                     recordedAt = d.recordedAt,
-                    day = dayOf(d.recordedAt),
+                    day = dayFor(d.groupId, d.recordedAt),
                     note = d.note?.trim()?.takeIf { it.isNotEmpty() },
                 )
                 if (d.editingId == 0L) recordDao.insert(entity) else recordDao.update(entity)
@@ -222,5 +234,5 @@ class Repository(
     }
 
     suspend fun hasRecordToday(groupId: Long, metricId: Long): Boolean =
-        recordDao.countOnDay(groupId, metricId, todayDay()) > 0
+        recordDao.countOnDay(groupId, metricId, dayFor(groupId, System.currentTimeMillis())) > 0
 }

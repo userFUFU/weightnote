@@ -6,7 +6,6 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.room.withTransaction
 import com.weightnote.data.MeasureUnit
 import com.weightnote.data.SettingsStore
-import com.weightnote.data.dayOf
 import com.weightnote.data.db.AppDatabase
 import com.weightnote.data.db.GroupEntity
 import com.weightnote.data.db.GroupTimeRuleEntity
@@ -17,6 +16,7 @@ import com.weightnote.data.db.ReminderEntity
 import com.weightnote.data.formatNumber
 import com.weightnote.data.localDateTimeOf
 import com.weightnote.data.unitTypeOf
+import com.weightnote.domain.logicalDay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -182,6 +182,7 @@ class BackupManager(
             if (firstId == null) firstId = profileId
 
             val groupIds = HashMap<Long, Long>()
+            val groupRules = HashMap<Long, List<GroupTimeRuleEntity>>()
             pb.groups.forEach { gb ->
                 val gid = groupDao.insert(
                     GroupEntity(
@@ -193,7 +194,9 @@ class BackupManager(
                     ),
                 )
                 groupIds[gb.id] = gid
-                groupDao.insertRules(gb.rules.map { GroupTimeRuleEntity(groupId = gid, startMinute = it.start, endMinute = it.end) })
+                val rules = gb.rules.map { GroupTimeRuleEntity(groupId = gid, startMinute = it.start, endMinute = it.end) }
+                groupRules[gid] = rules
+                groupDao.insertRules(rules)
                 groupDao.insertReminders(gb.reminders.map { ReminderEntity(groupId = gid, minuteOfDay = it.minute, enabled = it.enabled) })
             }
 
@@ -224,7 +227,7 @@ class BackupManager(
                     inputValue = rb.value,
                     inputUnit = unit.name,
                     recordedAt = rb.time,
-                    day = dayOf(rb.time),
+                    day = logicalDay(rb.time, groupRules[gid].orEmpty()),
                     note = rb.note,
                 )
             }

@@ -51,6 +51,7 @@ import com.weightnote.data.todayDay
 import com.weightnote.domain.bmiCategory
 import com.weightnote.domain.bmiOf
 import com.weightnote.domain.latestPerDay
+import com.weightnote.domain.logicalDay
 import com.weightnote.ui.MainViewModel
 import com.weightnote.ui.Session
 import com.weightnote.ui.chart.ChartMetric
@@ -228,7 +229,7 @@ private fun SummaryCard(session: Session) {
 private fun TodayCard(session: Session, onRecordWeight: (Long?) -> Unit) {
     val weight = session.weightMetric ?: return
     val unit = session.profile.weightUnitEnum
-    val today = todayDay()
+    val now = System.currentTimeMillis()
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         modifier = Modifier.fillMaxWidth(),
@@ -236,6 +237,8 @@ private fun TodayCard(session: Session, onRecordWeight: (Long?) -> Unit) {
         Column(Modifier.padding(vertical = 12.dp)) {
             Text("今日", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 16.dp))
             session.groups.forEach { g ->
+                // 跨午夜分组在午夜后仍算“前一天”，如 00:12 时「晚上」显示的是昨晚的记录
+                val today = logicalDay(now, session.rules.filter { it.groupId == g.id })
                 val rec = session.records.firstOrNull { it.groupId == g.id && it.metricId == weight.id && it.day == today }
                 Row(
                     Modifier

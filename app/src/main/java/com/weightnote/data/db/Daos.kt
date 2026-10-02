@@ -126,6 +126,9 @@ interface RecordDao {
     @Query("SELECT * FROM records WHERE profileId = :profileId ORDER BY recordedAt, id")
     suspend fun getByProfile(profileId: Long): List<RecordEntity>
 
+    @Query("SELECT * FROM records WHERE groupId = :groupId")
+    suspend fun getByGroup(groupId: Long): List<RecordEntity>
+
     @Query(
         "SELECT * FROM records WHERE profileId = :profileId AND groupId = :groupId " +
             "AND metricId = :metricId AND day = :day AND id != :excludeId ORDER BY recordedAt",
@@ -166,6 +169,9 @@ interface RecordDao {
 
     @Update
     suspend fun update(record: RecordEntity)
+
+    @Update
+    suspend fun updateAll(records: List<RecordEntity>)
 
     @Delete
     suspend fun delete(record: RecordEntity)

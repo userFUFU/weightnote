@@ -18,8 +18,8 @@ data class ProfileEntity(
     val weightUnit: String = MeasureUnit.KG.name,
     val lengthUnit: String = MeasureUnit.CM.name,
     val goalWeightKg: Double? = null,
-    /** 是否按分组的时间段规则自动选择分组 */
-    val autoGroupByTime: Boolean = false,
+    /** 是否按分组的时间段规则自动选择分组（默认开启） */
+    val autoGroupByTime: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
 ) {
     val weightUnitEnum: MeasureUnit get() = MeasureUnit.of(weightUnit, MeasureUnit.KG)

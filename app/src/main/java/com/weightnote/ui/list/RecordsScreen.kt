@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.weightnote.data.dayOf
 import com.weightnote.data.db.RecordEntity
 import com.weightnote.domain.ignoredRecordIds
 import com.weightnote.ui.MainViewModel
@@ -190,7 +191,9 @@ private fun RecordRow(
             },
             supportingContent = {
                 val parts = buildList {
-                    add(formatTime(record.recordedAt))
+                    // 跨午夜分组中午夜后的记录归属前一天，时间前标注“次日”
+                    val nextDay = dayOf(record.recordedAt) != record.day
+                    add((if (nextDay) "次日 " else "") + formatTime(record.recordedAt))
                     if (ignored) add("同日同组有更新的记录，图表未采用")
                     record.note?.let { add(it) }
                 }
