@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 秤面 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,32h36a8,8 0,0 1,8 8v28a8,8 0,0 1,-8 8h-36a8,8 0,0 1,-8 -8v-28a8,8 0,0 1,8 -8z" />
+    <!-- 趋势折线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#2E7D6B"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M37,62L47,52L56,58L71,44" />
+    <path
+        android:fillColor="#F28C38"
+        android:pathData="M71,44m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+</vector>
