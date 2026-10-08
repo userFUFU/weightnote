@@ -44,11 +44,13 @@ import com.weightnote.domain.bmiOf
 import com.weightnote.domain.difference
 import com.weightnote.domain.latestPerDay
 import com.weightnote.domain.movingAverage
+import com.weightnote.domain.overnightDifference
 import com.weightnote.domain.statsOf
 import com.weightnote.ui.Session
 import com.weightnote.ui.components.ColorDot
 import com.weightnote.ui.components.DateRangePickerDialog
 import com.weightnote.ui.components.formatFullDate
+import com.weightnote.ui.components.formatShortDate
 
 enum class ChartRange(val label: String, val days: Long?) {
     D7("7天", 7),
@@ -83,12 +85,14 @@ fun groupPoints(
     latest: List<RecordEntity>,
     metric: ChartMetric,
     groupId: Long,
-    startDay: Long,
-    endDay: Long,
+    startDay: Long?,
+    endDay: Long?,
 ): List<ChartPoint> {
     val metricId = if (metric.isBmi) session.weightMetric?.id else metric.metricId
     return latest.asSequence()
-        .filter { it.groupId == groupId && it.metricId == metricId && it.day in startDay..endDay }
+        .filter { it.groupId == groupId && it.metricId == metricId }
+        .filter { startDay == null || it.day >= startDay }
+        .filter { endDay == null || it.day <= endDay }
         .mapNotNull { r ->
             val v = if (metric.isBmi) bmiOf(r.value, session.profile.heightCm) else metric.unit?.fromBase(r.value)
             v?.let { ChartPoint(r.day, it) }
@@ -111,9 +115,11 @@ fun ChartScreen(session: Session) {
     var showMa by rememberSaveable { mutableStateOf(false) }
     var showGoal by rememberSaveable { mutableStateOf(true) }
     var showDiff by rememberSaveable { mutableStateOf(false) }
-    var diffA by remember(session.profile.id) { mutableStateOf(session.groups.getOrNull(0)?.id) }
-    var diffB by remember(session.profile.id) { mutableStateOf(session.groups.getOrNull(1)?.id) }
-
+    var diffMode by rememberSaveable { mutableStateOf(DiffMode.OVERNIGHT) }
+    // 差值曲线默认「前一天 = 时间最晚的分组（晚上）」「第二天 = 最早的分组（早晨）」
+    val defaultDiff = remember(session.groups, session.rules) { defaultDiffGroups(session) }
+    var diffA by remember(session.profile.id) { mutableStateOf(defaultDiff.first) }
+    var diffB by remember(session.profile.id) { mutableStateOf(defaultDiff.second) }
     val latest = remember(session.records) { latestPerDay(session.records) }
     val today = todayDay()
 
@@ -134,6 +140,11 @@ fun ChartScreen(session: Session) {
         val unitLabel = metric.unit?.symbol ?: ""
         val groupPointMap = remember(latest, metric, startDay, endDay, session.groups) {
             session.groups.associate { g -> g.id to groupPoints(session, latest, metric, g.id, startDay, endDay) }
+        }
+        // 隔夜差值要用到前一天的数据，所以往前多取一天
+        val diffStartDay = if (diffMode == DiffMode.OVERNIGHT) startDay - 1 else startDay
+        val diffPointMap = remember(latest, metric, diffStartDay, endDay, session.groups) {
+            session.groups.associate { g -> g.id to groupPoints(session, latest, metric, g.id, diffStartDay, endDay) }
         }
         val goal = if (metric.metricId == session.weightMetric?.id && showGoal) {
             session.profile.goalWeightKg?.let { metric.unit?.fromBase(it) }
@@ -245,11 +256,13 @@ fun ChartScreen(session: Session) {
             if (showDiff && session.groups.size >= 2) {
                 DiffCard(
                     session = session,
-                    groupPointMap = groupPointMap,
+                    groupPointMap = diffPointMap,
                     a = diffA,
                     b = diffB,
                     onA = { diffA = it },
                     onB = { diffB = it },
+                    mode = diffMode,
+                    onModeChange = { diffMode = it },
                     startDay = startDay,
                     endDay = endDay,
                     unitLabel = unitLabel,
@@ -349,6 +362,26 @@ private fun StatsRow(cells: List<String>, header: Boolean = false) {
     }
 }
 
+/** 差值曲线的计算方式 */
+enum class DiffMode(val label: String) {
+    OVERNIGHT("隔夜变化"),
+    SAME_DAY("同一天变化"),
+}
+
+/** 某分组一天中的“代表时间”，取第一条时间段的开始时间；没有规则返回 -1 */
+private fun groupStartMinute(session: Session, groupId: Long): Int =
+    session.rules.filter { it.groupId == groupId }.minOfOrNull { it.startMinute } ?: -1
+
+/** 默认把开始时间最晚的分组当作“前一天”（晚上），最早当作“第二天”（早晨） */
+fun defaultDiffGroups(session: Session): Pair<Long?, Long?> {
+    val withStart = session.groups.map { it.id to groupStartMinute(session, it.id) }
+    val timed = withStart.filter { it.second >= 0 }
+    if (timed.size >= 2) {
+        return timed.maxBy { it.second }.first to timed.minBy { it.second }.first
+    }
+    return session.groups.getOrNull(0)?.id to session.groups.getOrNull(1)?.id
+}
+
 @Composable
 private fun DiffCard(
     session: Session,
@@ -357,12 +390,15 @@ private fun DiffCard(
     b: Long?,
     onA: (Long) -> Unit,
     onB: (Long) -> Unit,
+    mode: DiffMode,
+    onModeChange: (DiffMode) -> Unit,
     startDay: Long,
     endDay: Long,
     unitLabel: String,
 ) {
     val groupA = session.groupById[a]
     val groupB = session.groupById[b]
+    val overnight = mode == DiffMode.OVERNIGHT
     Card(
         Modifier
             .fillMaxWidth()
@@ -370,29 +406,39 @@ private fun DiffCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(Modifier.padding(vertical = 12.dp)) {
+            Text("差值曲线", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 12.dp))
+            Spacer(Modifier.height(6.dp))
+            ChipRow {
+                DiffMode.entries.forEach { m ->
+                    FilterChip(m == mode, onClick = { onModeChange(m) }, label = { Text(m.label) })
+                }
+            }
             Text(
-                "差值曲线：${groupB?.name ?: "B"} − ${groupA?.name ?: "A"}",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            Text(
-                "只统计两个分组同一天都有记录的日期",
+                if (overnight) {
+                    "每天的变化 = 第二天「${groupB?.name ?: "?"}」− 前一天「${groupA?.name ?: "?"}」，点落在第二天"
+                } else {
+                    "每天的变化 = 同一天「${groupB?.name ?: "?"}」− 同一天「${groupA?.name ?: "?"}」"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("A：", style = MaterialTheme.typography.labelLarge)
-            }
+
+            Text(
+                if (overnight) "前一天（晚上）" else "被减数 A",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
             ChipRow {
                 session.groups.forEach { g ->
                     FilterChip(g.id == a, onClick = { onA(g.id) }, label = { Text(g.name) }, leadingIcon = { ColorDot(Color(g.color)) })
                 }
             }
-            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("B：", style = MaterialTheme.typography.labelLarge)
-            }
+            Text(
+                if (overnight) "第二天（早晨）" else "被减数 B",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
             ChipRow {
                 session.groups.forEach { g ->
                     FilterChip(g.id == b, onClick = { onB(g.id) }, label = { Text(g.name) }, leadingIcon = { ColorDot(Color(g.color)) })
@@ -407,9 +453,22 @@ private fun DiffCard(
                 )
                 return@Column
             }
-            val diff = difference(groupPointMap[a].orEmpty(), groupPointMap[b].orEmpty())
+
+            val pointsA = groupPointMap[a].orEmpty()
+            val pointsB = groupPointMap[b].orEmpty()
+            val diff = if (overnight) overnightDifference(pointsA, pointsB) else difference(pointsA, pointsB)
+            val valueOfA = { day: Long -> pointsA.firstOrNull { it.day == day }?.value }
+            val valueOfB = { day: Long -> pointsB.firstOrNull { it.day == day }?.value }
+
             LineChart(
-                series = listOf(ChartSeries("diff", "差值", MaterialTheme.colorScheme.tertiary, diff)),
+                series = listOf(
+                    ChartSeries(
+                        key = "diff",
+                        name = if (overnight) "隔夜变化" else "同一天变化",
+                        color = MaterialTheme.colorScheme.tertiary,
+                        points = diff,
+                    ),
+                ),
                 startDay = startDay,
                 endDay = endDay,
                 unitLabel = unitLabel,
@@ -420,10 +479,29 @@ private fun DiffCard(
                     .height(220.dp)
                     .padding(8.dp),
             )
+
+            // 明确指出最近一次是怎么算出来的，避免只看公式看不懂
+            diff.lastOrNull()?.let { latestDiff ->
+                val dayB = latestDiff.day
+                val dayA = if (overnight) dayB - 1 else dayB
+                val valueA = valueOfA(dayA)
+                val valueB = valueOfB(dayB)
+                if (valueA != null && valueB != null) {
+                    Text(
+                        "最近一次：" +
+                            "${formatShortDate(dayB)}「${groupB.name}」${formatNumber(valueB)} " +
+                            "− ${formatShortDate(dayA)}「${groupA.name}」${formatNumber(valueA)} " +
+                            "= ${formatDelta(latestDiff.value)} $unitLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
             statsOf(diff)?.let { s ->
                 Text(
                     "平均 ${formatDelta(s.average)}  ·  最大 ${formatDelta(s.max.value)}  ·  最小 ${formatDelta(s.min.value)}  ·  共 ${s.count} 天",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
             }

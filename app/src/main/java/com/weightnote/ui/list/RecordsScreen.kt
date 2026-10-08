@@ -1,5 +1,7 @@
 package com.weightnote.ui.list
 
+import androidx.compose.foundation.layout.size
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -57,6 +60,7 @@ fun RecordsScreen(
     session: Session,
     vm: MainViewModel,
     onEdit: (RecordEntity) -> Unit,
+    onOpenTrash: () -> Unit,
 ) {
     var metricFilter by rememberSaveable { mutableStateOf<Long?>(null) }
     var groupFilter by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -71,7 +75,19 @@ fun RecordsScreen(
     }
     val byDay = remember(filtered) { filtered.groupBy { it.day } }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("全部记录") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("全部记录") },
+                actions = {
+                    TextButton(onClick = onOpenTrash) {
+                        Icon(Icons.Outlined.DeleteOutline, null, modifier = Modifier.size(18.dp))
+                        Text(if (session.trash.isEmpty()) " 回收站" else " 回收站 ${session.trash.size}")
+                    }
+                },
+            )
+        },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()

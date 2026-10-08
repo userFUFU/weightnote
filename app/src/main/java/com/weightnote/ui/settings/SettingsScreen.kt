@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.ManageAccounts
@@ -51,6 +52,7 @@ fun SettingsScreen(
     onProfiles: () -> Unit,
     onGroups: () -> Unit,
     onMetrics: () -> Unit,
+    onTrash: () -> Unit,
     onBackup: () -> Unit,
 ) {
     var themeDialog by remember { mutableStateOf(false) }
@@ -78,6 +80,16 @@ fun SettingsScreen(
             )
             val enabledCount = session.metrics.count { it.enabled }
             NavItem(Icons.Outlined.Straighten, "指标管理", "已启用 $enabledCount 项（体重、体脂率、围度）", onMetrics)
+            NavItem(
+                Icons.Outlined.DeleteOutline,
+                "回收站",
+                if (session.trash.isEmpty()) {
+                    "删除的记录保留 7 天，目前是空的"
+                } else {
+                    "${session.trash.size} 条已删除的记录，7 天内可恢复"
+                },
+                onTrash,
+            )
 
             SectionTitle("通用")
             NavItem(Icons.Outlined.Palette, "外观", themeMode.label) { themeDialog = true }
@@ -86,7 +98,7 @@ fun SettingsScreen(
             SectionTitle("关于")
             ListItem(
                 leadingContent = { Icon(Icons.Outlined.Info, null) },
-                headlineContent = { Text("体重记 1.0.0") },
+                headlineContent = { Text("体重记 1.0.2") },
                 supportingContent = { Text("所有数据仅保存在本机，不联网、不需要账号") },
             )
         }

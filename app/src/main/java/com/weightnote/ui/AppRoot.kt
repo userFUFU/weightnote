@@ -42,6 +42,7 @@ import androidx.navigation.navArgument
 import com.weightnote.ui.chart.ChartScreen
 import com.weightnote.ui.home.HomeScreen
 import com.weightnote.ui.list.RecordsScreen
+import com.weightnote.ui.list.TrashScreen
 import com.weightnote.ui.profile.OnboardingScreen
 import com.weightnote.ui.profile.ProfileEditScreen
 import com.weightnote.ui.profile.ProfilesScreen
@@ -68,6 +69,7 @@ private object Routes {
     const val GROUP = "group/{id}"
     const val METRICS = "metrics"
     const val BACKUP = "backup"
+    const val TRASH = "trash"
 
     fun profile(id: Long) = "profile/$id"
     fun group(id: Long) = "group/$id"
@@ -169,7 +171,15 @@ private fun MainScaffold(session: Session, vm: MainViewModel) {
             }
             composable(Routes.CHART) { ChartScreen(session) }
             composable(Routes.RECORDS) {
-                RecordsScreen(session, vm, onEdit = { entryMode = EntryMode.Edit(it) })
+                RecordsScreen(
+                    session = session,
+                    vm = vm,
+                    onEdit = { entryMode = EntryMode.Edit(it) },
+                    onOpenTrash = { nav.navigate(Routes.TRASH) },
+                )
+            }
+            composable(Routes.TRASH) {
+                TrashScreen(session, vm, onBack = { nav.popBackStack() })
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(
@@ -180,6 +190,7 @@ private fun MainScaffold(session: Session, vm: MainViewModel) {
                     onProfiles = { nav.navigate(Routes.PROFILES) },
                     onGroups = { nav.navigate(Routes.GROUPS) },
                     onMetrics = { nav.navigate(Routes.METRICS) },
+                    onTrash = { nav.navigate(Routes.TRASH) },
                     onBackup = { nav.navigate(Routes.BACKUP) },
                 )
             }

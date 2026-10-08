@@ -20,6 +20,7 @@ import com.weightnote.data.db.MetricKeys
 import com.weightnote.data.db.ProfileEntity
 import com.weightnote.data.db.RecordEntity
 import com.weightnote.data.db.ReminderEntity
+import com.weightnote.data.db.TrashRecordEntity
 import com.weightnote.data.unitTypeOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -44,6 +45,8 @@ data class Session(
     val metrics: List<MetricEntity>,
     /** 按时间倒序 */
     val records: List<RecordEntity>,
+    /** 回收站，按删除时间倒序 */
+    val trash: List<TrashRecordEntity> = emptyList(),
 ) {
     val groupById: Map<Long, GroupEntity> = groups.associateBy { it.id }
     val metricById: Map<Long, MetricEntity> = metrics.associateBy { it.id }
@@ -111,8 +114,18 @@ class MainViewModel(
                         repo.observeReminders(profile.id),
                         repo.observeMetrics(profile.id),
                         repo.observeRecords(profile.id),
-                    ) { groups, rules, reminders, metrics, records ->
-                        Session(profile, profiles, groups, rules, reminders, metrics, records)
+                        repo.observeTrash(profile.id),
+                    ) { values ->
+                        Session(
+                            profile = profile,
+                            profiles = profiles,
+                            groups = values[0] as List<GroupEntity>,
+                            rules = values[1] as List<GroupTimeRuleEntity>,
+                            reminders = values[2] as List<ReminderEntity>,
+                            metrics = values[3] as List<MetricEntity>,
+                            records = values[4] as List<RecordEntity>,
+                            trash = values[5] as List<TrashRecordEntity>,
+                        )
                     }.map { MainUiState.Ready(it) }
                 }
             }
@@ -124,6 +137,11 @@ class MainViewModel(
     val entryRequest = MutableStateFlow<EntryRequest?>(null)
 
     private val session: Session? get() = (uiState.value as? MainUiState.Ready)?.session
+
+    init {
+        // 启动时清理超过保留期的回收站记录
+        viewModelScope.launch { repo.purgeExpiredTrash() }
+    }
 
     fun toast(text: String) {
         _messages.tryEmit(UiMessage(text))
@@ -164,20 +182,51 @@ class MainViewModel(
 
     fun saveDrafts(drafts: List<RecordDraft>, overwrite: Boolean, message: String? = null) = viewModelScope.launch {
         val profileId = session?.profile?.id ?: return@launch
+        val toTrash = if (overwrite) repo.findConflicts(profileId, drafts).size else 0
         repo.saveDrafts(profileId, drafts, overwrite)
-        message?.let { toast(it) }
+        when {
+            toTrash > 0 -> toast("${message ?: "已保存"}；被覆盖的 $toTrash 条记录已移入回收站")
+            else -> message?.let { toast(it) }
+        }
     }
 
     fun deleteRecord(record: RecordEntity) = viewModelScope.launch {
-        repo.deleteRecord(record)
+        val trashId = repo.deleteRecord(record)
         _messages.tryEmit(
-            UiMessage("已删除 1 条记录", "撤销") {
+            UiMessage("已移入回收站，7 天内可恢复", "撤销") {
                 viewModelScope.launch {
-                    runCatching { repo.restoreRecord(record) }
-                        .onFailure { toast("无法恢复：所属分组或指标已被删除") }
+                    trashId?.let { repo.restoreFromTrash(it) }
                 }
             },
         )
+    }
+
+    // ---------------- 回收站 ----------------
+
+    suspend fun countTrash(): Int = session?.profile?.id?.let { repo.countTrash(it) } ?: 0
+
+    /** 清理超过保留期的记录，返回清除条数 */
+    fun purgeExpiredTrash() = viewModelScope.launch {
+        val removed = repo.purgeExpiredTrash()
+        if (removed > 0) toast("已清除 $removed 条超过 7 天的回收站记录")
+    }
+
+    fun restoreTrash(entry: TrashRecordEntity) = viewModelScope.launch {
+        repo.restoreFromTrash(entry.id)
+            .onSuccess {
+                toast("已恢复")
+                purgeExpiredTrash()
+            }
+            .onFailure { toast("恢复失败：${it.message}") }
+    }
+
+    fun deleteTrashEntry(entry: TrashRecordEntity) = viewModelScope.launch {
+        repo.deleteTrashEntry(entry)
+    }
+
+    fun clearTrash() = viewModelScope.launch {
+        session?.profile?.id?.let { repo.clearTrash(it) }
+        toast("回收站已清空")
     }
 
     // ---------------- 分组 ----------------

@@ -47,10 +47,24 @@ fun movingAverage(points: List<ChartPoint>, windowDays: Int = 7): List<ChartPoin
     return result
 }
 
-/** 差值曲线：两组都有数据的日期上，计算 b - a */
+/**
+ * 差值曲线（同一天）：两组都有记录的日期上，计算 b(当天) - a(当天)。
+ * 例如「晚上 − 早晨」得到同一天从早到晚的变化。
+ */
 fun difference(a: List<ChartPoint>, b: List<ChartPoint>): List<ChartPoint> {
     val aMap = a.associate { it.day to it.value }
     return b.mapNotNull { p -> aMap[p.day]?.let { ChartPoint(p.day, p.value - it) } }.sortedBy { it.day }
+}
+
+/**
+ * 差值曲线（隔夜）：b(第二天) - a(第一天)，点落在第二天。
+ * 例如 a = 晚上、b = 早晨：10/3 早晨的体重减去 10/2 晚上的体重，就是这一夜的变化。
+ */
+fun overnightDifference(previous: List<ChartPoint>, next: List<ChartPoint>): List<ChartPoint> {
+    val previousMap = previous.associate { it.day to it.value }
+    return next.mapNotNull { p ->
+        previousMap[p.day - 1]?.let { ChartPoint(p.day, p.value - it) }
+    }.sortedBy { it.day }
 }
 
 data class SeriesStats(

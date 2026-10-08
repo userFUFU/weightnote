@@ -16,8 +16,9 @@ import com.weightnote.domain.logicalDay
         MetricEntity::class,
         RecordEntity::class,
         ReminderEntity::class,
+        TrashRecordEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -25,12 +26,44 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun groupDao(): GroupDao
     abstract fun metricDao(): MetricDao
     abstract fun recordDao(): RecordDao
+    abstract fun trashDao(): TrashDao
 
     companion object {
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "weightnote.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
+
+        /** v2 → v3：新增回收站表 */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `trash_records` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`profileId` INTEGER NOT NULL, " +
+                        "`groupId` INTEGER NOT NULL, " +
+                        "`groupName` TEXT NOT NULL, " +
+                        "`groupColor` INTEGER NOT NULL, " +
+                        "`metricId` INTEGER NOT NULL, " +
+                        "`metricKey` TEXT NOT NULL, " +
+                        "`metricName` TEXT NOT NULL, " +
+                        "`metricUnitType` TEXT NOT NULL, " +
+                        "`metricBuiltIn` INTEGER NOT NULL, " +
+                        "`value` REAL NOT NULL, " +
+                        "`inputValue` REAL NOT NULL, " +
+                        "`inputUnit` TEXT NOT NULL, " +
+                        "`recordedAt` INTEGER NOT NULL, " +
+                        "`day` INTEGER NOT NULL, " +
+                        "`note` TEXT, " +
+                        "`deletedAt` INTEGER NOT NULL, " +
+                        "`reason` TEXT NOT NULL)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_records_profileId` ON `trash_records` (`profileId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_records_deletedAt` ON `trash_records` (`deletedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_records_groupId` ON `trash_records` (`groupId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_trash_records_metricId` ON `trash_records` (`metricId`)")
+            }
+        }
 
         /**
          * v1 → v2（表结构不变）：

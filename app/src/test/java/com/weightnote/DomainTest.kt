@@ -17,6 +17,7 @@ import com.weightnote.domain.difference
 import com.weightnote.domain.ignoredRecordIds
 import com.weightnote.domain.latestPerDay
 import com.weightnote.domain.movingAverage
+import com.weightnote.domain.overnightDifference
 import com.weightnote.domain.rangesOverlap
 import com.weightnote.data.TimeRange
 import com.weightnote.ui.record.KeypadKey
@@ -76,6 +77,23 @@ class DomainTest {
         val d = difference(a, b)
         assertEquals(1, d.size)
         assertEquals(1.0, d[0].value, 1e-9)
+    }
+
+    @Test
+    fun overnightDifference_takesNextMorningMinusPreviousEvening() {
+        // 晚上：10/1 63.0、10/2 63.4；早晨：10/2 62.0、10/3 62.5
+        val evening = listOf(ChartPoint(1, 63.0), ChartPoint(2, 63.4))
+        val morning = listOf(ChartPoint(2, 62.0), ChartPoint(3, 62.5))
+        val d = overnightDifference(evening, morning)
+        assertEquals(2, d.size)
+        // 10/2 早晨 − 10/1 晚上
+        assertEquals(2L, d[0].day)
+        assertEquals(-1.0, d[0].value, 1e-9)
+        // 10/3 早晨 − 10/2 晚上，点落在 10/3
+        assertEquals(3L, d[1].day)
+        assertEquals(62.5 - 63.4, d[1].value, 1e-9)
+        // 早晨有记录但前一晚没有数据时，这一天不参与计算
+        assertEquals(0, overnightDifference(evening, listOf(ChartPoint(9, 60.0))).size)
     }
 
     @Test

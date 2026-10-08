@@ -9,6 +9,8 @@ import com.weightnote.data.db.MetricKeys
 import com.weightnote.data.db.ProfileEntity
 import com.weightnote.data.db.RecordEntity
 import com.weightnote.data.db.ReminderEntity
+import com.weightnote.data.db.TrashReason
+import com.weightnote.data.db.TrashRecordEntity
 import com.weightnote.domain.logicalDay
 import kotlinx.coroutines.flow.Flow
 
@@ -41,6 +43,9 @@ val GroupPalette: List<Int> = listOf(
     0xFF78909C.toInt(), // 灰蓝
 )
 
+/** 回收站保留天数 */
+const val TRASH_RETENTION_DAYS = 7
+
 class Repository(
     private val db: AppDatabase,
     /** 提醒相关数据变化后回调，用于重新安排闹钟 */
@@ -50,6 +55,7 @@ class Repository(
     private val groupDao = db.groupDao()
     private val metricDao = db.metricDao()
     private val recordDao = db.recordDao()
+    private val trashDao = db.trashDao()
 
     // ---------------- 观察 ----------------
 
@@ -59,6 +65,7 @@ class Repository(
     fun observeReminders(profileId: Long): Flow<List<ReminderEntity>> = groupDao.observeReminders(profileId)
     fun observeMetrics(profileId: Long): Flow<List<MetricEntity>> = metricDao.observeByProfile(profileId)
     fun observeRecords(profileId: Long): Flow<List<RecordEntity>> = recordDao.observeByProfile(profileId)
+    fun observeTrash(profileId: Long): Flow<List<TrashRecordEntity>> = trashDao.observeByProfile(profileId)
 
     // ---------------- 身份 ----------------
 
@@ -99,7 +106,9 @@ class Repository(
 
     suspend fun updateProfile(profile: ProfileEntity) = profileDao.update(profile)
 
-    suspend fun deleteProfile(profile: ProfileEntity) {
+    suspend fun deleteProfile(profile: ProfileEntity) = db.withTransaction {
+        // 身份都删了，回收站里的记录留着也没有归属，直接清掉
+        trashDao.deleteByProfile(profile.id)
         profileDao.delete(profile)
         onRemindersChanged()
     }
@@ -138,7 +147,8 @@ class Repository(
         return id
     }
 
-    suspend fun deleteGroup(group: GroupEntity) {
+    suspend fun deleteGroup(group: GroupEntity) = db.withTransaction {
+        moveRecordsToTrash(recordDao.getByGroup(group.id), TrashReason.GROUP_DELETED)
         groupDao.delete(group)
         onRemindersChanged()
     }
@@ -178,7 +188,12 @@ class Repository(
     }
 
     suspend fun deleteMetric(metric: MetricEntity) {
-        if (!metric.builtIn) metricDao.delete(metric)
+        if (metric.builtIn) return
+        db.withTransaction {
+            val records = recordDao.getByProfile(metric.profileId).filter { it.metricId == metric.id }
+            moveRecordsToTrash(records, TrashReason.METRIC_DELETED)
+            metricDao.delete(metric)
+        }
     }
 
     suspend fun countRecordsOfMetric(metricId: Long) = recordDao.countByMetric(metricId)
@@ -207,7 +222,10 @@ class Repository(
         db.withTransaction {
             if (overwrite) {
                 val conflicts = findConflicts(profileId, drafts)
-                if (conflicts.isNotEmpty()) recordDao.deleteByIds(conflicts.map { it.id })
+                if (conflicts.isNotEmpty()) {
+                    moveRecordsToTrash(conflicts, TrashReason.OVERWRITTEN)
+                    recordDao.deleteByIds(conflicts.map { it.id })
+                }
             }
             drafts.forEach { d ->
                 val entity = RecordEntity(
@@ -226,13 +244,119 @@ class Repository(
             }
         }
 
-    suspend fun deleteRecord(record: RecordEntity) = recordDao.delete(record)
-
-    /** 撤销删除：按原 id 重新插入 */
-    suspend fun restoreRecord(record: RecordEntity) {
-        recordDao.insert(record)
+    /** 删除记录：移入回收站，保留 7 天，返回回收站条目 id（用于撤销） */
+    suspend fun deleteRecord(record: RecordEntity): Long? = db.withTransaction {
+        val trashId = moveRecordsToTrash(listOf(record), TrashReason.MANUAL).firstOrNull()
+        recordDao.delete(record)
+        trashId
     }
 
     suspend fun hasRecordToday(groupId: Long, metricId: Long): Boolean =
         recordDao.countOnDay(groupId, metricId, dayFor(groupId, System.currentTimeMillis())) > 0
+
+    // ---------------- 回收站 ----------------
+
+    suspend fun countTrash(profileId: Long): Int = trashDao.countByProfile(profileId)
+
+    suspend fun latestTrashId(profileId: Long): Long? = trashDao.latestId(profileId)
+
+    fun trashExpireAt(deletedAt: Long): Long =
+        deletedAt + TRASH_RETENTION_DAYS * 24L * 60 * 60 * 1000
+
+    /** 把记录搬进回收站，同时记下分组/指标的当时信息，便于它们被删除后仍能恢复 */
+    private suspend fun moveRecordsToTrash(records: List<RecordEntity>, reason: String): List<Long> {
+        if (records.isEmpty()) return emptyList()
+        val metrics = records.firstOrNull()?.let { metricDao.getByProfile(it.profileId) }.orEmpty().associateBy { it.id }
+        val now = System.currentTimeMillis()
+        val entries = records.mapNotNull { r ->
+            val metric = metrics[r.metricId] ?: return@mapNotNull null
+            val group = groupDao.get(r.groupId)
+            TrashRecordEntity(
+                profileId = r.profileId,
+                groupId = r.groupId,
+                groupName = group?.name ?: "已删除的分组",
+                groupColor = group?.color ?: 0xFF9E9E9E.toInt(),
+                metricId = r.metricId,
+                metricKey = metric.key,
+                metricName = metric.name,
+                metricUnitType = metric.unitType,
+                metricBuiltIn = metric.builtIn,
+                value = r.value,
+                inputValue = r.inputValue,
+                inputUnit = r.inputUnit,
+                recordedAt = r.recordedAt,
+                day = r.day,
+                note = r.note,
+                deletedAt = now,
+                reason = reason,
+            )
+        }
+        return entries.map { trashDao.insert(it) }
+    }
+
+    /** 永久清除超过保留期的回收站记录，返回清除条数 */
+    suspend fun purgeExpiredTrash(): Int {
+        val cutoff = System.currentTimeMillis() - TRASH_RETENTION_DAYS * 24L * 60 * 60 * 1000
+        return trashDao.purgeOlderThan(cutoff)
+    }
+
+    suspend fun deleteTrashEntry(entry: TrashRecordEntity) = trashDao.delete(entry)
+
+    suspend fun clearTrash(profileId: Long) = trashDao.deleteByProfile(profileId)
+
+    /**
+     * 从回收站恢复一条记录。
+     * 分组或指标如果已经不在了就按当时的信息重新创建，日期按当前时间规则重算。
+     */
+    suspend fun restoreFromTrash(trashId: Long): Result<Long> = runCatching {
+        db.withTransaction {
+            val entry = trashDao.get(trashId) ?: error("这条记录已经被恢复了")
+            if (profileDao.get(entry.profileId) == null) error("所属身份已被删除，无法恢复")
+
+            val metric = metricDao.getByKey(entry.profileId, entry.metricKey) ?: run {
+                val order = (metricDao.getByProfile(entry.profileId).maxOfOrNull { it.sortOrder } ?: -1) + 1
+                val id = metricDao.insert(
+                    MetricEntity(
+                        profileId = entry.profileId,
+                        key = entry.metricKey,
+                        name = entry.metricName,
+                        unitType = entry.metricUnitType,
+                        builtIn = entry.metricBuiltIn,
+                        enabled = true,
+                        sortOrder = order,
+                    ),
+                )
+                metricDao.getByProfile(entry.profileId).first { it.id == id }
+            }
+
+            val group = groupDao.get(entry.groupId)?.takeIf { it.profileId == entry.profileId } ?: run {
+                val order = (groupDao.getByProfile(entry.profileId).maxOfOrNull { it.sortOrder } ?: -1) + 1
+                val id = groupDao.insert(
+                    GroupEntity(
+                        profileId = entry.profileId,
+                        name = entry.groupName,
+                        color = entry.groupColor,
+                        sortOrder = order,
+                    ),
+                )
+                groupDao.get(id)!!
+            }
+
+            val recordId = recordDao.insert(
+                RecordEntity(
+                    profileId = entry.profileId,
+                    groupId = group.id,
+                    metricId = metric.id,
+                    value = entry.value,
+                    inputValue = entry.inputValue,
+                    inputUnit = entry.inputUnit,
+                    recordedAt = entry.recordedAt,
+                    day = dayFor(group.id, entry.recordedAt),
+                    note = entry.note,
+                ),
+            )
+            trashDao.deleteById(trashId)
+            recordId
+        }
+    }
 }

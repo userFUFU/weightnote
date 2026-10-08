@@ -178,4 +178,48 @@ interface RecordDao {
 
     @Query("DELETE FROM records WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("SELECT * FROM records WHERE profileId = :profileId")
+    suspend fun getByProfileList(profileId: Long): List<RecordEntity>
+}
+
+@Dao
+interface TrashDao {
+    @Query("SELECT * FROM trash_records WHERE profileId = :profileId ORDER BY deletedAt DESC, id DESC")
+    fun observeByProfile(profileId: Long): Flow<List<TrashRecordEntity>>
+
+    @Query("SELECT * FROM trash_records WHERE id = :id")
+    suspend fun get(id: Long): TrashRecordEntity?
+
+    @Query("SELECT id FROM trash_records WHERE profileId = :profileId ORDER BY deletedAt DESC, id DESC LIMIT 1")
+    suspend fun latestId(profileId: Long): Long?
+
+    @Query("SELECT COUNT(*) FROM trash_records WHERE profileId = :profileId")
+    suspend fun countByProfile(profileId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM trash_records")
+    suspend fun countAll(): Int
+
+    @Insert
+    suspend fun insert(entry: TrashRecordEntity): Long
+
+    @Insert
+    suspend fun insertAll(entries: List<TrashRecordEntity>)
+
+    @Delete
+    suspend fun delete(entry: TrashRecordEntity)
+
+    @Query("DELETE FROM trash_records WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM trash_records WHERE profileId = :profileId")
+    suspend fun deleteByProfile(profileId: Long)
+
+    /** 永久清除超过保留期的记录 */
+    @Query("DELETE FROM trash_records WHERE deletedAt < :cutoff")
+    suspend fun purgeOlderThan(cutoff: Long): Int
+
+    /** 超出保留期的记录（含原因），用于提示用户 */
+    @Query("SELECT id FROM trash_records WHERE deletedAt < :cutoff")
+    suspend fun idsOlderThan(cutoff: Long): List<Long>
 }

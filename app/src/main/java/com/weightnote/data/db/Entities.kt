@@ -161,6 +161,47 @@ data class ReminderEntity(
     val enabled: Boolean = true,
 )
 
+/** 删除原因，展示在回收站里 */
+object TrashReason {
+    const val MANUAL = "手动删除"
+    const val OVERWRITTEN = "被新记录覆盖"
+    const val GROUP_DELETED = "所属分组被删除"
+    const val METRIC_DELETED = "所属指标被删除"
+}
+
+/**
+ * 回收站：删除的记录先移到这里，保留 7 天。
+ * 故意不加外键——分组、指标被删除后这些记录仍要保留，方便误删后恢复。
+ */
+@Entity(
+    tableName = "trash_records",
+    indices = [Index("profileId"), Index("deletedAt"), Index("groupId"), Index("metricId")],
+)
+data class TrashRecordEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val profileId: Long,
+    val groupId: Long,
+    val groupName: String,
+    val groupColor: Int,
+    val metricId: Long,
+    val metricKey: String,
+    val metricName: String,
+    /** UnitType.name */
+    val metricUnitType: String,
+    val metricBuiltIn: Boolean,
+    /** 换算到基础单位后的值 */
+    val value: Double,
+    val inputValue: Double,
+    val inputUnit: String,
+    val recordedAt: Long,
+    val day: Long,
+    val note: String? = null,
+    val deletedAt: Long,
+    val reason: String,
+) {
+    val inputUnitEnum: MeasureUnit get() = MeasureUnit.of(inputUnit, MeasureUnit.KG)
+}
+
 object MetricKeys {
     const val WEIGHT = "weight"
     const val BODY_FAT = "body_fat"
