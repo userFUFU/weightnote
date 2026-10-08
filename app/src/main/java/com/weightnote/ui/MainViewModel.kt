@@ -22,7 +22,12 @@ import com.weightnote.data.db.RecordEntity
 import com.weightnote.data.db.ReminderEntity
 import com.weightnote.data.db.TrashRecordEntity
 import com.weightnote.data.unitTypeOf
+import com.weightnote.widget.WeightWidget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -83,10 +88,10 @@ data class UiMessage(
     val action: (() -> Unit)? = null,
 )
 
-/** 从通知点进来时，请求打开某个分组的记录面板 */
-data class EntryRequest(val groupId: Long, val nonce: Long = System.nanoTime())
+/** 从通知 / 小组件点进来时，请求打开记录面板；groupId 为空表示按时间自动选分组 */
+data class EntryRequest(val groupId: Long?, val nonce: Long = System.nanoTime())
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class MainViewModel(
     private val app: Application,
     private val c: AppContainer,
@@ -141,6 +146,15 @@ class MainViewModel(
     init {
         // 启动时清理超过保留期的回收站记录
         viewModelScope.launch { repo.purgeExpiredTrash() }
+        // 记录、分组、身份变化后刷新桌面小组件
+        viewModelScope.launch {
+            uiState
+                .mapNotNull { (it as? MainUiState.Ready)?.session }
+                .map { listOf(it.profile, it.groups, it.rules, it.records) }
+                .distinctUntilChanged()
+                .debounce(800)
+                .collect { WeightWidget.refresh(app) }
+        }
     }
 
     fun toast(text: String) {

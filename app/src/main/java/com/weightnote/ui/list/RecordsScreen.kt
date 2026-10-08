@@ -1,5 +1,9 @@
 package com.weightnote.ui.list
 
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.layout.size
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -64,13 +68,17 @@ fun RecordsScreen(
 ) {
     var metricFilter by rememberSaveable { mutableStateOf<Long?>(null) }
     var groupFilter by rememberSaveable { mutableStateOf<Long?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
 
     val ignored = remember(session.records) { ignoredRecordIds(session.records) }
     val usedMetricIds = remember(session.records) { session.records.map { it.metricId }.toSet() }
     val metricOptions = session.metrics.filter { it.enabled || it.id in usedMetricIds }
-    val filtered = remember(session.records, metricFilter, groupFilter) {
+    val filtered = remember(session.records, metricFilter, groupFilter, query) {
+        val q = query.trim()
         session.records.filter {
-            (metricFilter == null || it.metricId == metricFilter) && (groupFilter == null || it.groupId == groupFilter)
+            (metricFilter == null || it.metricId == metricFilter) &&
+                (groupFilter == null || it.groupId == groupFilter) &&
+                (q.isEmpty() || it.note?.contains(q, ignoreCase = true) == true)
         }
     }
     val byDay = remember(filtered) { filtered.groupBy { it.day } }
@@ -93,6 +101,21 @@ fun RecordsScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it.take(30) },
+                placeholder = { Text("搜索备注，如：聚餐") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = if (query.isNotEmpty()) {
+                    { IconButton(onClick = { query = "" }) { Icon(Icons.Outlined.Close, "清除") } }
+                } else {
+                    null
+                },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            )
             Row(
                 Modifier
                     .horizontalScroll(rememberScrollState())
@@ -127,7 +150,10 @@ fun RecordsScreen(
 
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("还没有记录", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (session.records.isEmpty()) "还没有记录" else "没有符合条件的记录",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {

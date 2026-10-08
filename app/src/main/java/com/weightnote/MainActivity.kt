@@ -33,14 +33,14 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /** 处理从提醒通知点进来的意图：切换身份并打开对应分组的记录面板 */
+    /** 处理从提醒通知 / 桌面小组件点进来的意图：切换身份并打开记录面板 */
     private fun handleIntent(intent: Intent?) {
         intent ?: return
-        val groupId = intent.getLongExtra(Notifications.EXTRA_GROUP_ID, -1)
+        if (!intent.getBooleanExtra(Notifications.EXTRA_OPEN_ENTRY, false)) return
+        val groupId = intent.getLongExtra(Notifications.EXTRA_GROUP_ID, -1).takeIf { it > 0 }
         val profileId = intent.getLongExtra(Notifications.EXTRA_PROFILE_ID, -1)
-        if (groupId <= 0) return
         if (profileId > 0) vm.switchProfile(profileId)
         vm.entryRequest.value = EntryRequest(groupId)
-        intent.removeExtra(Notifications.EXTRA_GROUP_ID)
+        intent.removeExtra(Notifications.EXTRA_OPEN_ENTRY)
     }
 }

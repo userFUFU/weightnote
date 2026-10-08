@@ -35,7 +35,7 @@ abstract class AppDatabase : RoomDatabase() {
                 .build()
 
         /** v2 → v3：新增回收站表 */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "CREATE TABLE IF NOT EXISTS `trash_records` (" +
@@ -70,7 +70,7 @@ abstract class AppDatabase : RoomDatabase() {
          * 1. 按时间自动归组改为默认开启，已有身份一并开启
          * 2. 跨午夜时间段（如 18:00–02:00）中午夜之后的记录，归属日期改为前一天
          */
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("UPDATE profiles SET autoGroupByTime = 1")
 

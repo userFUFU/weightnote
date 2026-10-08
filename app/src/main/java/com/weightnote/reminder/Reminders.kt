@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -45,28 +46,45 @@ class ReminderScheduler(private val context: Context, private val db: AppDatabas
         val now = LocalDateTime.now()
         var at = now.toLocalDate().atTime(reminder.minuteOfDay / 60, reminder.minuteOfDay % 60)
         if (!at.isAfter(now)) at = at.plusDays(1)
-        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMillisOf(at), pendingIntent(reminder.id))
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, epochMillisOf(at), pendingIntent(reminder.id, snooze = false))
     }
 
-    private fun cancel(id: Long) = alarmManager.cancel(pendingIntent(id))
+    /** 稍后再提醒一次（不影响每天的固定提醒） */
+    fun snooze(reminderId: Long, minutes: Int = SNOOZE_MINUTES) {
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pendingIntent(reminderId, snooze = true))
+    }
 
-    private fun pendingIntent(id: Long): PendingIntent = PendingIntent.getBroadcast(
+    private fun cancel(id: Long) {
+        alarmManager.cancel(pendingIntent(id, snooze = false))
+        alarmManager.cancel(pendingIntent(id, snooze = true))
+    }
+
+    private fun pendingIntent(id: Long, snooze: Boolean): PendingIntent = PendingIntent.getBroadcast(
         context,
-        id.toInt(),
-        Intent(context, ReminderReceiver::class.java).putExtra(EXTRA_REMINDER_ID, id),
+        (if (snooze) id + SNOOZE_REQUEST_OFFSET else id).toInt(),
+        Intent(context, ReminderReceiver::class.java)
+            .putExtra(EXTRA_REMINDER_ID, id)
+            .putExtra(EXTRA_SNOOZE, snooze),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
     companion object {
         private const val KEY_SCHEDULED = "scheduled_ids"
+        private const val SNOOZE_REQUEST_OFFSET = 1_000_000L
+        const val SNOOZE_MINUTES = 30
         const val EXTRA_REMINDER_ID = "reminder_id"
+        const val EXTRA_SNOOZE = "snooze"
     }
 }
 
 object Notifications {
     const val CHANNEL_REMINDER = "reminder"
+    const val EXTRA_OPEN_ENTRY = "open_entry"
     const val EXTRA_PROFILE_ID = "open_profile_id"
     const val EXTRA_GROUP_ID = "open_group_id"
+    const val EXTRA_NOTIFY_ID = "notify_id"
+    const val ACTION_SNOOZE = "com.weightnote.action.SNOOZE"
 
     fun createChannels(context: Context) {
         val channel = NotificationChannel(CHANNEL_REMINDER, "记录提醒", NotificationManager.IMPORTANCE_DEFAULT)
@@ -79,14 +97,43 @@ object Notifications {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
 
-    fun showReminder(context: Context, title: String, text: String, profileId: Long, groupId: Long, notifyId: Int) {
-        if (!canPost(context)) return
-        val intent = Intent(context, MainActivity::class.java)
+    /**
+     * 打开 App 并弹出记录面板的 Intent（通知、桌面小组件共用）。
+     * groupId 为空时按时间规则自动选分组。每个 Intent 带不同的 data，避免 PendingIntent 被系统合并。
+     */
+    fun entryIntent(context: Context, profileId: Long?, groupId: Long?): Intent =
+        Intent(context, MainActivity::class.java)
+            .setData(Uri.parse("weightnote://entry/${profileId ?: 0}/${groupId ?: 0}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(EXTRA_PROFILE_ID, profileId)
-            .putExtra(EXTRA_GROUP_ID, groupId)
+            .putExtra(EXTRA_OPEN_ENTRY, true)
+            .apply {
+                profileId?.let { putExtra(EXTRA_PROFILE_ID, it) }
+                groupId?.let { putExtra(EXTRA_GROUP_ID, it) }
+            }
+
+    fun showReminder(
+        context: Context,
+        title: String,
+        text: String,
+        profileId: Long,
+        groupId: Long,
+        reminderId: Long,
+        notifyId: Int,
+    ) {
+        if (!canPost(context)) return
         val content = PendingIntent.getActivity(
-            context, notifyId, intent,
+            context,
+            notifyId,
+            entryIntent(context, profileId, groupId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val snooze = PendingIntent.getBroadcast(
+            context,
+            notifyId,
+            Intent(context, ReminderActionReceiver::class.java)
+                .setAction(ACTION_SNOOZE)
+                .putExtra(ReminderScheduler.EXTRA_REMINDER_ID, reminderId)
+                .putExtra(EXTRA_NOTIFY_ID, notifyId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_REMINDER)
@@ -94,6 +141,8 @@ object Notifications {
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(content)
+            .addAction(0, "去记录", content)
+            .addAction(0, "${ReminderScheduler.SNOOZE_MINUTES} 分钟后提醒", snooze)
             .setAutoCancel(true)
             .build()
         try {
@@ -108,6 +157,7 @@ class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_ID, -1)
         if (id < 0) return
+        val isSnooze = intent.getBooleanExtra(ReminderScheduler.EXTRA_SNOOZE, false)
         val container = (context.applicationContext as WeightNoteApp).container
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
@@ -115,8 +165,8 @@ class ReminderReceiver : BroadcastReceiver() {
                 val db = container.database
                 val reminder = db.groupDao().getReminder(id) ?: return@launch
                 if (!reminder.enabled) return@launch
-                // 先安排下一次，避免后续出错导致提醒中断
-                container.reminderScheduler.schedule(reminder)
+                // 每天的固定提醒：先安排下一次，避免后续出错导致提醒中断；稍后提醒只响一次
+                if (!isSnooze) container.reminderScheduler.schedule(reminder)
                 val group = db.groupDao().get(reminder.groupId) ?: return@launch
                 val profile = db.profileDao().get(group.profileId) ?: return@launch
                 val weight = db.metricDao().getByKey(profile.id, MetricKeys.WEIGHT) ?: return@launch
@@ -130,6 +180,7 @@ class ReminderReceiver : BroadcastReceiver() {
                         text = "${who}「${group.name}」今天还没有记录",
                         profileId = profile.id,
                         groupId = group.id,
+                        reminderId = reminder.id,
                         notifyId = group.id.toInt(),
                     )
                 }
@@ -137,6 +188,18 @@ class ReminderReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+}
+
+/** 通知上的按钮：稍后提醒 */
+class ReminderActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Notifications.ACTION_SNOOZE) return
+        val reminderId = intent.getLongExtra(ReminderScheduler.EXTRA_REMINDER_ID, -1)
+        val notifyId = intent.getIntExtra(Notifications.EXTRA_NOTIFY_ID, -1)
+        if (notifyId >= 0) NotificationManagerCompat.from(context).cancel(notifyId)
+        if (reminderId < 0) return
+        (context.applicationContext as WeightNoteApp).container.reminderScheduler.snooze(reminderId)
     }
 }
 

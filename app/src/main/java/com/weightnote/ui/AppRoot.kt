@@ -124,8 +124,10 @@ private fun MainScaffold(session: Session, vm: MainViewModel) {
     // 从提醒通知进入：切到对应身份后打开记录面板
     LaunchedEffect(entryRequest, session.profile.id) {
         val req = entryRequest ?: return@LaunchedEffect
-        if (session.groupById.containsKey(req.groupId)) {
-            entryMode = EntryMode.NewWeight(req.groupId)
+        val groupId = req.groupId
+        // 指定了分组时，等切换到对应身份、分组加载出来后再打开
+        if (groupId == null || session.groupById.containsKey(groupId)) {
+            entryMode = EntryMode.NewWeight(groupId)
             vm.entryRequest.value = null
         }
     }

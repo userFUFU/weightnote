@@ -58,6 +58,16 @@ import com.weightnote.ui.chart.ChartMetric
 import com.weightnote.ui.chart.ChartSeries
 import com.weightnote.ui.chart.LineChart
 import com.weightnote.ui.chart.groupPoints
+import com.weightnote.ui.chart.defaultDiffGroups
+import com.weightnote.ui.components.formatFullDate
+import com.weightnote.data.MeasureUnit
+import com.weightnote.domain.ChartPoint
+import com.weightnote.domain.GoalForecast
+import com.weightnote.domain.averageIn
+import com.weightnote.domain.difference
+import com.weightnote.domain.forecastGoal
+import com.weightnote.domain.overnightDifference
+import com.weightnote.domain.statsOf
 import com.weightnote.ui.components.ColorDot
 import com.weightnote.ui.components.formatDateTime
 import com.weightnote.ui.components.formatTime
@@ -130,6 +140,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SummaryCard(session)
+            InsightsCard(session)
             TodayCard(session, onRecordWeight)
             MiniChartCard(session, onOpenChart)
             OutlinedButton(onClick = onRecordMeasure, modifier = Modifier.fillMaxWidth()) {
@@ -219,6 +230,99 @@ private fun SummaryCard(session: Session) {
                     val progress = ((start - latest.value) / (start - goal)).toFloat().coerceIn(0f, 1f)
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                }
+                // 按「早晨」最近 3 周的趋势预测
+                val forecast = remember(session.records, goal) { goalForecast(session, goal) }
+                forecast?.let { f ->
+                    Spacer(Modifier.height(6.dp))
+                    val trend = "近 3 周每周 ${formatDelta(unit.fromBase(f.perWeek))} ${unit.symbol}"
+                    Text(
+                        when {
+                            f.reached -> "按趋势已到达目标附近（$trend）"
+                            f.day != null -> "按趋势预计 ${formatFullDate(f.day)} 达到目标（$trend）"
+                            else -> "${f.reason}（$trend）"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 体重点（基础单位 kg），按“同日同组取最新”去重 */
+private fun weightPointsKg(session: Session, groupId: Long?, fromDay: Long, toDay: Long): List<ChartPoint> {
+    val weight = session.weightMetric ?: return emptyList()
+    groupId ?: return emptyList()
+    val metric = ChartMetric("m${weight.id}", weight.name, weight.id, MeasureUnit.KG)
+    return groupPoints(session, latestPerDay(session.records), metric, groupId, fromDay, toDay)
+}
+
+private fun goalForecast(session: Session, goalKg: Double): GoalForecast? {
+    val today = todayDay()
+    val morning = defaultDiffGroups(session).second
+    return forecastGoal(weightPointsKg(session, morning, today - 20, today), goalKg, today)
+}
+
+/** 根据早晚数据自动得出的几条结论 */
+@Composable
+private fun InsightsCard(session: Session) {
+    val unit = session.profile.weightUnitEnum
+    val insights = remember(session.records, session.groups, session.rules, unit) {
+        val today = todayDay()
+        val (eveningId, morningId) = defaultDiffGroups(session)
+        val evening = session.groupById[eveningId]
+        val morning = session.groupById[morningId]
+        val m30 = weightPointsKg(session, morningId, today - 30, today)
+        val e30 = weightPointsKg(session, eveningId, today - 30, today)
+        buildList {
+            if (morning != null && evening != null && morningId != eveningId) {
+                statsOf(overnightDifference(e30, m30))?.takeIf { it.count >= 3 }?.let {
+                    add(
+                        "隔夜变化" to
+                            "近 30 天平均每晚 ${formatDelta(unit.fromBase(it.average))} ${unit.symbol}" +
+                            "（${evening.name} → 次日${morning.name}，${it.count} 天）",
+                    )
+                }
+                statsOf(difference(m30, e30))?.takeIf { it.count >= 3 }?.let {
+                    add(
+                        "日内变化" to
+                            "近 30 天平均每天 ${formatDelta(unit.fromBase(it.average))} ${unit.symbol}" +
+                            "（${morning.name} → ${evening.name}，${it.count} 天）",
+                    )
+                }
+            }
+            if (morning != null) {
+                val pts = weightPointsKg(session, morningId, today - 13, today)
+                val thisWeek = averageIn(pts, today - 6, today)
+                val lastWeek = averageIn(pts, today - 13, today - 7)
+                if (thisWeek != null && lastWeek != null) {
+                    add(
+                        "周对比" to
+                            "${morning.name}近 7 天均值 ${formatNumber(unit.fromBase(thisWeek))} ${unit.symbol}，" +
+                            "较前 7 天 ${formatDelta(unit.fromBase(thisWeek - lastWeek))} ${unit.symbol}",
+                    )
+                }
+            }
+        }
+    }
+    if (insights.isEmpty()) return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("数据洞察", style = MaterialTheme.typography.titleSmall)
+            insights.forEach { (label, text) ->
+                Row {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.width(64.dp),
+                    )
+                    Text(text, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

@@ -107,7 +107,11 @@ fun ChartScreen(session: Session) {
     val metrics = chartMetrics(session)
     var metricKey by rememberSaveable(session.profile.id) { mutableStateOf(metrics.firstOrNull()?.key) }
     val metric = metrics.firstOrNull { it.key == metricKey } ?: metrics.firstOrNull()
-    var range by rememberSaveable { mutableStateOf(ChartRange.D30) }
+    // 刚开始记录、数据不到一周时默认看 7 天，避免曲线挤在右侧一小段
+    var range by rememberSaveable {
+        val firstDay = session.records.minOfOrNull { it.day }
+        mutableStateOf(if (firstDay == null || todayDay() - firstDay < 7) ChartRange.D7 else ChartRange.D30)
+    }
     var customStart by rememberSaveable { mutableStateOf<Long?>(null) }
     var customEnd by rememberSaveable { mutableStateOf<Long?>(null) }
     var pickRange by remember { mutableStateOf(false) }

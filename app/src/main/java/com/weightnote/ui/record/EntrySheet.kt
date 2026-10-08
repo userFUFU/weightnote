@@ -1,5 +1,10 @@
 package com.weightnote.ui.record
 
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -112,6 +117,8 @@ fun EntrySheet(
     var pickTime by remember { mutableStateOf(false) }
     var conflicts by remember { mutableStateOf<List<RecordEntity>>(emptyList()) }
     var pendingDrafts by remember { mutableStateOf<List<RecordDraft>>(emptyList()) }
+    // 正在输入备注时收起数字键盘，避免和系统键盘叠在一起
+    var noteFocused by remember { mutableStateOf(false) }
 
     // 新建时：按分组带出上次的值（用户还没动过键盘时才覆盖）
     LaunchedEffect(groupId, unit) {
@@ -236,7 +243,10 @@ fun EntrySheet(
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { activeField = 0 },
+                    .clickable {
+                        focus.clearFocus()
+                        activeField = 0
+                    },
             ) {
                 Column(Modifier.padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     BigValueDisplay(valueText, unit.symbol, fresh = valueFresh && editRecord == null)
@@ -261,7 +271,10 @@ fun EntrySheet(
                         ),
                         modifier = Modifier
                             .weight(1f)
-                            .clickable { activeField = 1 },
+                            .clickable {
+                                focus.clearFocus()
+                                activeField = 1
+                            },
                     ) {
                         Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                             Text("体脂率（可选）", style = MaterialTheme.typography.labelSmall)
@@ -296,25 +309,35 @@ fun EntrySheet(
                 onValueChange = { note = it.take(100) },
                 placeholder = { Text("备注（可选）") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                trailingIcon = if (noteFocused) {
+                    { TextButton(onClick = { focus.clearFocus() }) { Text("完成") } }
+                } else {
+                    null
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { noteFocused = it.isFocused },
             )
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp))
             }
 
-            Spacer(Modifier.height(12.dp))
-            NumberKeypad(onKey = { key ->
-                focus.clearFocus()
-                error = null
-                if (activeField == 0) {
-                    valueText = applyKey(valueText, valueFresh && editRecord == null, key)
-                    valueFresh = false
-                } else {
-                    fatText = applyKey(fatText, fatFresh, key, maxInt = 2)
-                    fatFresh = false
-                }
-            })
+            if (!noteFocused) {
+                Spacer(Modifier.height(12.dp))
+                NumberKeypad(onKey = { key ->
+                    error = null
+                    if (activeField == 0) {
+                        valueText = applyKey(valueText, valueFresh && editRecord == null, key)
+                        valueFresh = false
+                    } else {
+                        fatText = applyKey(fatText, fatFresh, key, maxInt = 2)
+                        fatFresh = false
+                    }
+                })
+            }
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = ::save,

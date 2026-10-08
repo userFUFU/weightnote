@@ -1,5 +1,7 @@
 package com.weightnote
 
+import com.weightnote.domain.forecastGoal
+import com.weightnote.domain.linearFit
 import com.weightnote.data.MeasureUnit
 import com.weightnote.data.db.GroupEntity
 import com.weightnote.data.db.GroupTimeRuleEntity
@@ -94,6 +96,22 @@ class DomainTest {
         assertEquals(62.5 - 63.4, d[1].value, 1e-9)
         // 早晨有记录但前一晚没有数据时，这一天不参与计算
         assertEquals(0, overnightDifference(evening, listOf(ChartPoint(9, 60.0))).size)
+    }
+
+    @Test
+    fun forecastGoal_linearTrend() {
+        // 从 day 100 起每天减 0.1 kg，共 21 天
+        val pts = (0..20).map { ChartPoint(100L + it, 70.0 - 0.1 * it) }
+        val (slope, _) = linearFit(pts)!!
+        assertEquals(-0.1, slope, 1e-9)
+        val today = 120L // 拟合值 68.0
+        val f = forecastGoal(pts, goal = 67.0, today = today)!!
+        assertEquals(130L, f.day) // 还差 1 kg，每天 0.1 → 10 天
+        assertEquals(-0.7, f.perWeek, 1e-9)
+        // 趋势方向与目标相反：无法预测
+        assertEquals(null, forecastGoal(pts, goal = 69.5, today = today)?.day)
+        // 数据太少不预测
+        assertEquals(null, forecastGoal(pts.take(3), goal = 67.0, today = today))
     }
 
     @Test
